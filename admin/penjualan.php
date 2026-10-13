@@ -2,6 +2,8 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_login();
 
+global $pdo;
+
 $success = $_GET['success'] ?? '';
 $error = $_GET['error'] ?? '';
 
@@ -11,61 +13,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $id = $_POST['id'] ?? null;
-    $production_id = $_POST['production_id'] ?? null;
-    $distribution_date = trim($_POST['distribution_date'] ?? '');
-    $distributed = (int) ($_POST['distributed'] ?? 0);
+    $distribution_id = $_POST['distribution_id'] ?? null;
+    $report_date = trim($_POST['report_date'] ?? '');
+    $total_distributed = (int) ($_POST['total_distributed'] ?? 0);
+    $total_bs = (int) ($_POST['total_bs'] ?? 0);
+    $price_per = (float) ($_POST['price_per'] ?? 0);
     $note = trim($_POST['note'] ?? '');
 
-    if ($distribution_date === '') {
-        $error = 'Tanggal distribusi wajib diisi.';
-    } elseif ($distributed < 0) {
-        $error = 'Jumlah distribusi tidak boleh negatif.';
+    if (!$distribution_id) {
+        $error = 'Batch distribusi wajib dipilih.';
+    } elseif ($report_date === '') {
+        $error = 'Tanggal laporan wajib diisi.';
+    } elseif ($total_distributed < 0 || $total_bs < 0) {
+        $error = 'Jumlah tidak boleh negatif.';
+    } elseif ($total_bs > $total_distributed) {
+        $error = 'Jumlah BS tidak boleh melebihi total dititipkan.';
+    } elseif ($price_per <= 0) {
+        $error = 'Harga jual per donat harus lebih dari nol.';
     } else {
-        $prod = null;
-        if ($production_id) {
-            $prod = $pdo->prepare('SELECT produced, distributed FROM productions WHERE id = ? LIMIT 1');
-            $prod->execute([$production_id]);
-            $prod = $prod->fetch();
-            if (!$prod) {
-                $error = 'Data produksi tidak ditemukan.';
-            } elseif ($distributed > ((int)$prod['produced'] - (int)$prod['distributed'])) {
-                $error = 'Distribusi melebihi jumlah donat yang tersedia.';
-            }
-        }
+        $total_sold = max(0, $total_distributed - $total_bs);
+        $total_value = $total_sold * $price_per;
 
-        if (empty($error)) {
-            if ($id) {
-                $stmt = $pdo->prepare('UPDATE distributions SET production_id = ?, distribution_date = ?, distributed = ?, note = ? WHERE id = ?');
-                $stmt->execute([$production_id ?: null, $distribution_date, $distributed, $note, $id]);
-                $success = 'Data distribusi berhasil diperbarui.';
-            } else {
-                $stmt = $pdo->prepare('INSERT INTO distributions (production_id, distribution_date, distributed, note, created_at) VALUES (?, ?, ?, ?, NOW())');
-                $stmt->execute([$production_id ?: null, $distribution_date, $distributed, $note]);
-                $success = 'Data distribusi berhasil disimpan.';
-            }
+        if ($id) {
+            $stmt = $pdo->prepare('UPDATE sales_reports SET distribution_id = ?, report_date = ?, total_distributed = ?, total_bs = ?, price_per = ?, total_value = ?, note = ? WHERE id = ?');
+            $stmt->execute([$distribution_id, $report_date, $total_distributed, $total_bs, $price_per, $total_value, $note, $id]);
+            $success = 'Laporan penjualan berhasil diperbarui.';
+        } else {
+            $stmt = $pdo->prepare('INSERT INTO sales_reports (distribution_id, report_date, total_distributed, total_bs, price_per, total_value, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())');
+            $stmt->execute([$distribution_id, $report_date, $total_distributed, $total_bs, $price_per, $total_value, $note]);
+            $success = 'Laporan penjualan berhasil disimpan.';
         }
     }
 }
 
 if (isset($_GET['delete'])) {
-    $pdo->prepare('DELETE FROM distributions WHERE id = ?')->execute([$_GET['delete']]);
-    header('Location: /laporan_penjualan_harian/admin/distribusi.php?success=Data+distribusi+berhasil+dihapus');
+    $pdo->prepare('DELETE FROM sales_reports WHERE id = ?')->execute([$_GET['delete']]);
+    header('Location: /laporan_penjualan_harian/admin/penjualan.php?success=Laporan+penjualan+berhasil+dihapus');
     exit;
 }
 
 $edit = null;
 if (!empty($_GET['edit'])) {
-    $stmt = $pdo->prepare('SELECT * FROM distributions WHERE id = ? LIMIT 1');
+    $stmt = $pdo->prepare('SELECT * FROM sales_reports WHERE id = ? LIMIT 1');
     $stmt->execute([$_GET['edit']]);
     $edit = $stmt->fetch();
 }
 
-$productions = $pdo->query('SELECT * FROM productions ORDER BY production_date DESC')->fetchAll();
-$rows = $pdo->query('SELECT d.*, p.production_date, p.batch_name FROM distributions d LEFT JOIN productions p ON p.id = d.production_id ORDER BY d.distribution_date DESC, d.id DESC')->fetchAll();
+$distributions = $pdo->query('SELECT d.*, p.batch_name, p.production_date FROM distributions d LEFT JOIN productions p ON p.id = d.production_id ORDER BY d.distribution_date DESC')->fetchAll();
+$rows = $pdo->query('SELECT sr.*, d.distribution_date, p.batch_name FROM sales_reports sr LEFT JOIN distributions d ON d.id = sr.distribution_id LEFT JOIN productions p ON p.id = d.production_id ORDER BY sr.report_date DESC, sr.id DESC')->fetchAll();
 include __DIR__ . '/../includes/header.php';
 ?>
 <div class="container-fluid">
-  <h2 class="mb-4">Distribusi Donat</h2>
+  <h2 class="mb-4">Laporan Penjualan</h2>
   <?php if (!empty($success)): ?><div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div><?php endif; ?>
   <?php if (!empty($error)): ?><div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
 
@@ -76,31 +75,39 @@ include __DIR__ . '/../includes/header.php';
         <?php if ($edit): ?><input type="hidden" name="id" value="<?php echo (int) $edit['id']; ?>"><?php endif; ?>
 
         <div class="col-md-4">
-          <label class="form-label">Produksi terkait</label>
-          <select name="production_id" class="form-select">
-            <option value="">-- Pilih produksi --</option>
-            <?php foreach ($productions as $p): ?>
-              <option value="<?php echo (int)$p['id']; ?>" <?php echo (($edit['production_id'] ?? '') == $p['id']) ? 'selected' : ''; ?>>
-                <?php echo htmlspecialchars($p['production_date'] . ' - ' . ($p['batch_name'] ?: 'Batch umum')); ?>
+          <label class="form-label">Batch distribusi</label>
+          <select name="distribution_id" class="form-select" required>
+            <option value="">-- Pilih batch --</option>
+            <?php foreach ($distributions as $d): ?>
+              <option value="<?php echo (int)$d['id']; ?>" <?php echo (($edit['distribution_id'] ?? '') == $d['id']) ? 'selected' : ''; ?>>
+                <?php echo htmlspecialchars(($d['batch_name'] ?: $d['production_date'] ?: 'Batch') . ' / ' . $d['distribution_date'] . ' / ' . $d['distributed'] . ' pcs'); ?>
               </option>
             <?php endforeach; ?>
           </select>
         </div>
-        <div class="col-md-4">
-          <label class="form-label">Tanggal distribusi</label>
-          <input type="date" name="distribution_date" class="form-control" value="<?php echo htmlspecialchars($edit['distribution_date'] ?? ''); ?>" required>
+        <div class="col-md-3">
+          <label class="form-label">Tanggal pengecekan</label>
+          <input type="date" name="report_date" class="form-control" value="<?php echo htmlspecialchars($edit['report_date'] ?? ''); ?>" required>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Dititipkan</label>
+          <input type="number" min="0" step="1" name="total_distributed" class="form-control" value="<?php echo htmlspecialchars($edit['total_distributed'] ?? ''); ?>" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Donat BS</label>
+          <input type="number" min="0" step="1" name="total_bs" class="form-control" value="<?php echo htmlspecialchars($edit['total_bs'] ?? ''); ?>" required>
         </div>
         <div class="col-md-4">
-          <label class="form-label">Jumlah dititipkan</label>
-          <input type="number" min="0" step="1" name="distributed" class="form-control" value="<?php echo htmlspecialchars($edit['distributed'] ?? ''); ?>" required>
+          <label class="form-label">Harga jual per biji</label>
+          <input type="number" min="0" step="1" name="price_per" class="form-control" value="<?php echo htmlspecialchars($edit['price_per'] ?? ''); ?>" required>
         </div>
-        <div class="col-md-12">
+        <div class="col-md-8">
           <label class="form-label">Catatan</label>
           <textarea name="note" class="form-control"><?php echo htmlspecialchars($edit['note'] ?? ''); ?></textarea>
         </div>
         <div class="col-12">
           <button class="btn btn-pink"><?php echo $edit ? 'Update' : 'Simpan'; ?></button>
-          <?php if ($edit): ?><a href="/laporan_penjualan_harian/admin/distribusi.php" class="btn btn-outline-secondary ms-2">Batal</a><?php endif; ?>
+          <?php if ($edit): ?><a href="/laporan_penjualan_harian/admin/penjualan.php" class="btn btn-outline-secondary ms-2">Batal</a><?php endif; ?>
         </div>
       </form>
     </div>
@@ -112,22 +119,28 @@ include __DIR__ . '/../includes/header.php';
         <thead class="table-light">
           <tr>
             <th>Tanggal distribusi</th>
-            <th>Produksi</th>
-            <th>Jumlah</th>
-            <th>Catatan</th>
+            <th>Report</th>
+            <th>Dititipkan</th>
+            <th>BS</th>
+            <th>Terjual</th>
+            <th>Harga</th>
+            <th>Nilai</th>
             <th>Aksi</th>
           </tr>
         </thead>
         <tbody>
           <?php foreach ($rows as $row): ?>
             <tr>
-              <td><?php echo htmlspecialchars($row['distribution_date']); ?></td>
-              <td><?php echo htmlspecialchars($row['batch_name'] ?: $row['production_date'] ?: '-'); ?></td>
-              <td><?php echo number_format((int)$row['distributed']); ?></td>
-              <td><?php echo htmlspecialchars($row['note'] ?: '-'); ?></td>
+              <td><?php echo htmlspecialchars($row['distribution_date'] ?: '-'); ?></td>
+              <td><?php echo htmlspecialchars($row['report_date']); ?></td>
+              <td><?php echo number_format((int)$row['total_distributed']); ?></td>
+              <td><?php echo number_format((int)$row['total_bs']); ?></td>
+              <td><?php echo number_format((int)max(0, (int)$row['total_distributed'] - (int)$row['total_bs'])); ?></td>
+              <td><?php echo formatRupiah($row['price_per']); ?></td>
+              <td><?php echo formatRupiah($row['total_value']); ?></td>
               <td>
-                <a href="/laporan_penjualan_harian/admin/distribusi.php?edit=<?php echo (int)$row['id']; ?>" class="btn btn-sm btn-outline-primary">Edit</a>
-                <a href="/laporan_penjualan_harian/admin/distribusi.php?delete=<?php echo (int)$row['id']; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('Hapus data distribusi ini?');">Hapus</a>
+                <a href="/laporan_penjualan_harian/admin/penjualan.php?edit=<?php echo (int)$row['id']; ?>" class="btn btn-sm btn-outline-primary">Edit</a>
+                <a href="/laporan_penjualan_harian/admin/penjualan.php?delete=<?php echo (int)$row['id']; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('Hapus laporan ini?');">Hapus</a>
               </td>
             </tr>
           <?php endforeach; ?>

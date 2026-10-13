@@ -1,104 +1,110 @@
-body {
-  font-family: 'Segoe UI', Tahoma, sans-serif;
-  background: #f7f7fb;
-  color: #1f2937;
-}
+-- MySQL dump for Donat NS database schema
+CREATE DATABASE IF NOT EXISTS `donat_ns` DEFAULT CHARACTER SET = 'utf8mb4' COLLATE 'utf8mb4_unicode_ci';
+USE `donat_ns`;
 
-.text-pink { color: #ff5ca8 !important; }
-.btn-pink {
-  background: linear-gradient(135deg, #ff7bb5, #ff4fa0);
-  border: none;
-  color: #fff;
-}
-.btn-pink:hover { color: #fff; filter: brightness(0.96); }
+CREATE TABLE `users` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `username` VARCHAR(100) NOT NULL UNIQUE,
+  `password_hash` VARCHAR(255) NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-.topnav {
-  background: #fff;
-  border-bottom: 1px solid #f0f0f0;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.03);
-}
+CREATE TABLE `productions` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `production_date` DATE NOT NULL,
+  `batch_name` VARCHAR(100) NULL,
+  `produced` INT NOT NULL CHECK (produced >= 0),
+  `distributed` INT NOT NULL DEFAULT 0 CHECK (distributed >= 0),
+  `note` TEXT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY `uniq_production_date_batch` (`production_date`, `batch_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-.sidebar {
-  width: 250px;
-  min-height: calc(100vh - 60px);
-  background: #fff;
-  border-right: 1px solid #f1f1f1;
-}
+CREATE TABLE `distributions` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `production_id` INT NULL,
+  `distribution_date` DATE NOT NULL,
+  `distributed` INT NOT NULL CHECK (distributed >= 0),
+  `note` TEXT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_distribution_date` (`distribution_date`),
+  CONSTRAINT `fk_distributions_production` FOREIGN KEY (`production_id`) REFERENCES `productions`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-.brand-box {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 600;
-  color: #ff5ca8;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: #fff5fa;
-}
+CREATE TABLE `sales_reports` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `distribution_id` INT NOT NULL,
+  `report_date` DATE NOT NULL,
+  `total_distributed` INT NOT NULL CHECK (total_distributed >= 0),
+  `total_bs` INT NOT NULL DEFAULT 0 CHECK (total_bs >= 0),
+  `total_sold` INT GENERATED ALWAYS AS (GREATEST(total_distributed - total_bs, 0)) STORED,
+  `price_per` DECIMAL(12,2) NOT NULL,
+  `total_value` DECIMAL(14,2) NOT NULL,
+  `note` TEXT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_report_date` (`report_date`),
+  CONSTRAINT `fk_sales_reports_distribution` FOREIGN KEY (`distribution_id`) REFERENCES `distributions`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-.sidebar .nav-link {
-  color: #495057;
-  border-radius: 10px;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+CREATE TABLE `payments` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `sales_report_id` INT NOT NULL,
+  `payment_date` DATE NOT NULL,
+  `amount` DECIMAL(14,2) NOT NULL CHECK (amount >= 0),
+  `note` TEXT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_payment_date` (`payment_date`),
+  CONSTRAINT `fk_payments_report` FOREIGN KEY (`sales_report_id`) REFERENCES `sales_reports`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-.sidebar .nav-link:hover {
-  background: #fff4fa;
-  color: #ff5ca8;
-}
+CREATE TABLE `expense_categories` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `name` VARCHAR(150) NOT NULL UNIQUE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-.content-area {
-  flex: 1;
-  min-height: calc(100vh - 60px);
-}
+INSERT INTO `expense_categories` (`name`) VALUES
+('Tepung'),
+('Gula'),
+('Telur'),
+('Minyak'),
+('Margarin'),
+('Ragi'),
+('Topping'),
+('Kemasan'),
+('Gas'),
+('Transportasi'),
+('Pengeluaran Lainnya');
 
-.summary-card {
-  background: linear-gradient(180deg, #fff, #fff7fb);
-  border: 1px solid #f4dfe9;
-  border-radius: 18px;
-  box-shadow: 0 10px 25px rgba(32, 37, 64, 0.04);
-}
+CREATE TABLE `expenses` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `expense_date` DATE NOT NULL,
+  `category_id` INT NULL,
+  `item` VARCHAR(255) NULL,
+  `quantity` INT NULL,
+  `unit_price` DECIMAL(14,2) NULL,
+  `total` DECIMAL(14,2) NOT NULL,
+  `note` TEXT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_expense_date` (`expense_date`),
+  CONSTRAINT `fk_expenses_category` FOREIGN KEY (`category_id`) REFERENCES `expense_categories`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-.summary-card small {
-  color: #6c757d;
-}
+CREATE TABLE `cash_openings` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `opening_date` DATE NOT NULL,
+  `opening_balance` DECIMAL(14,2) NOT NULL,
+  `note` TEXT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_opening_date` (`opening_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-.summary-card h4 {
-  color: #1a1d29;
-  margin-bottom: 0;
-}
+CREATE TABLE `audit_logs` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NULL,
+  `action` VARCHAR(255) NOT NULL,
+  `detail` TEXT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_audit_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-.card {
-  border-radius: 18px;
-}
-
-.table thead th {
-  background: #f8f9fa;
-}
-
-@media (max-width: 767px) {
-  .sidebar {
-    width: 100%;
-    min-height: auto;
-  }
-  .d-flex {
-    display: block !important;
-  }
-  .content-area {
-    padding-top: 1rem !important;
-  }
-}
-
-@media print {
-  .sidebar, .navbar, .btn, .d-flex.justify-content-between .d-flex.gap-2 {
-    display: none !important;
-  }
-  .content-area {
-    width: 100%;
-    max-width: none;
-    padding: 0 !important;
-  }
-}
+COMMIT;
