@@ -1,13 +1,19 @@
-/* Custom styles for Donat NS */
-:root{
-  --pink:#ff7bac;
-  --blue:#4da6ff;
-  --muted:#f6f6f8;
+<?php
+require_once __DIR__ . '/../../config/database.php';
+
+$start = $_GET['start'] ?? date('Y-m-01');
+$end = $_GET['end'] ?? date('Y-m-d');
+
+$stmt = $pdo->prepare('SELECT report_date, COALESCE(SUM(total_value), 0) AS total FROM sales_reports WHERE report_date BETWEEN ? AND ? GROUP BY report_date ORDER BY report_date ASC');
+$stmt->execute([$start, $end]);
+$rows = $stmt->fetchAll();
+
+$labels = [];
+$values = [];
+foreach ($rows as $row) {
+    $labels[] = $row['report_date'];
+    $values[] = (float) $row['total'];
 }
-body{font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial}
-.topnav{background:#fff;border-bottom:1px solid #eee}
-.sidebar{width:220px;background:#fff;border-right:1px solid #f0f0f0;min-height:calc(100vh - 56px)}
-.content-area{flex:1;background:#fff}
-.summary-card{border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.04)}
-.btn-pink{background:var(--pink);color:#fff;border:none}
-.btn-pink:hover{background:#ff5ea8}
+
+header('Content-Type: application/json');
+echo json_encode(['labels' => $labels, 'values' => $values]);
